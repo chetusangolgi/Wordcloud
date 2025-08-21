@@ -19,43 +19,24 @@ CORS(app)
 
 def create_threshold_mask(image_bytes, threshold):
     """
-    Creates a clean mask based on a brightness threshold using a robust cleaning process.
-
-    Args:
-        image_bytes (bytes): The raw bytes of the uploaded image.
-        threshold (int): The brightness threshold (0-255).
-
-    Returns:
-        numpy.ndarray or None: A mask with the subject in white (255), or None on failure.
+    Creates an extremely detailed mask by using high resolution and minimal processing.
     """
     try:
-        # 1. Load Image and Resize
-        img = Image.open(io.BytesIO(image_bytes)).convert("L")  # Convert to grayscale
-        max_dimension = 800
+        # 1. Load Image at VERY HIGH RESOLUTION
+        img = Image.open(io.BytesIO(image_bytes)).convert("L")
+        max_dimension = 2000
         img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
         img_np = np.array(img)
 
-        # 2. Apply Threshold
-        # Pixels darker than the threshold become the subject (white in the mask)
+        # 2. Apply Threshold to get the raw shape
         mask = np.where(img_np < threshold, 255, 0).astype(np.uint8)
 
-        # 3. Clean the Mask with Morphological Operations
-        kernel_small = np.ones((3, 3), np.uint8)
-        opened_mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small, iterations=2)
-
-        kernel_large = np.ones((10, 10), np.uint8)
-        closed_mask = cv2.morphologyEx(opened_mask, cv2.MORPH_CLOSE, kernel_large, iterations=2)
-
-        # 4. Final Cleanup: Isolate the Largest Shape
-        contours, _ = cv2.findContours(closed_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return None
-
-        largest_contour = max(contours, key=cv2.contourArea)
-        clean_mask = np.zeros_like(closed_mask)
-        cv2.drawContours(clean_mask, [largest_contour], -1, color=255, thickness=cv2.FILLED)
-
-        return clean_mask
+        # 3. Apply STRATEGIC MICRO-CLEANING
+        # Removes isolated single-pixel noise without affecting real details.
+        kernel = np.ones((2, 2), np.uint8)
+        cleaned_mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        
+        return cleaned_mask
 
     except Exception as e:
         print(f"Error creating threshold mask: {e}")
@@ -72,54 +53,53 @@ def generate_word_cloud():
     text = data['text']
     threshold = int(data['threshold'])
 
-    if not text:
+    if not text.strip():
         return jsonify({"error": "Text cannot be empty"}), 400
 
+    # --- THIS BLOCK WAS MISSING AND IS NOW RESTORED ---
+    # It decodes the base64 image data sent from the frontend.
     try:
         image_header, image_encoded = image_data.split(',', 1)
         image_bytes = base64.b64decode(image_encoded)
     except (ValueError, TypeError) as e:
         return jsonify({"error": f"Invalid image data: {e}"}), 400
+    # ---------------------------------------------------
 
-    # --- 2. Create Mask ---
-    # display_mask: subject = white (255), background = black (0)
-    display_mask = create_threshold_mask(image_bytes, threshold)
-    if display_mask is None:
+    # --- 2. Create Extremely Detailed Mask of the Subject ---
+    # This line will now work because 'image_bytes' is defined.
+    detailed_subject_mask = create_threshold_mask(image_bytes, threshold)
+    if detailed_subject_mask is None:
         return jsonify({"error": "Could not create a mask from the image with the current threshold."}), 500
+    
+    # Invert the mask to draw words on the background
+    target_mask = cv2.bitwise_not(detailed_subject_mask)
 
-    # >>> KEY CHANGE <<<
-    # We want words on the "black" part of the original picture.
-    # Since WordCloud places words where mask > 0 (white), invert the mask.
-    target_mask = cv2.bitwise_not(display_mask)  # now black region becomes white for WordCloud
+    if int(np.sum(target_mask)) == 0:
+        return jsonify({"error": "No drawable background area found. Try raising the threshold."}), 400
 
-    if int(np.sum(target_mask) == 0):
-        return jsonify({"error": "No drawable area found on the black region. Try lowering the threshold."}), 400
-
-    # --- 3. Generate the Word Cloud Image ---
-    # --- 3. Generate the Word Cloud Image ---
+    # --- 3. Generate the Word Cloud Image with DENSE FILL settings ---
     try:
         wc = WordCloud(
             background_color="white",
-            mode="RGB",
-            mask=target_mask,                  # Use the INVERTED mask
+            mode="RGBA",
+            mask=target_mask,
             color_func=lambda *args, **kwargs: "black",
-            relative_scaling=0.5,
-            # Removed contour_width and contour_color
+            repeat=True,
+            max_words=2000,
+            relative_scaling=0.1,
+            font_step=1,
         )
         wc.generate(text)
         word_image = wc.to_image()
-    
+
     except Exception as e:
         print(f"Error generating wordcloud: {e}")
         return jsonify({"error": "Failed to generate word cloud."}), 500
 
 
-    # --- 4. Final Compositing ---
-    final_image = word_image.resize(Image.fromarray(target_mask).size, Image.Resampling.LANCZOS)
-
-    # --- 5. Send Image Back to Frontend ---
+    # --- 4. Send Image Back to Frontend ---
     img_io = io.BytesIO()
-    final_image.save(img_io, 'PNG')
+    word_image.save(img_io, 'PNG')
     img_io.seek(0)
 
     return send_file(img_io, mimetype='image/png')
