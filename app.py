@@ -22,19 +22,11 @@ def create_threshold_mask(image_bytes, threshold):
     Creates the most accurate mask possible with zero cleaning.
     """
     try:
-        # 1. Load Image at MAXIMUM practical RESOLUTION
         img = Image.open(io.BytesIO(image_bytes)).convert("L")
-        # MODIFIED: Pushed to a very high resolution for final accuracy.
         max_dimension = 2500
         img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
         img_np = np.array(img)
-
-        # 2. Apply Threshold to get the raw shape
         mask = np.where(img_np < threshold, 255, 0).astype(np.uint8)
-
-        # 3. NO CLEANING
-        # For absolute, raw accuracy, all cleaning operations are removed.
-        # The mask is a 1:1 representation of the thresholded pixels.
         return mask
 
     except Exception as e:
@@ -70,25 +62,33 @@ def generate_word_cloud():
     if int(np.sum(target_mask)) == 0:
         return jsonify({"error": "No drawable background area found. Try raising the threshold."}), 400
 
-    # --- Generate Word Cloud with ABSOLUTE MAX DENSITY settings ---
     try:
+        # --- KEY CHANGE FOR BOLDER WORDS ---
+        # Make sure the font file name matches the one you downloaded and placed
+        # in the same folder as this script.
+        font_path = "Oswald-Bold.ttf"
+
         wc = WordCloud(
             background_color="white",
             mode="RGBA",
             mask=target_mask,
+            # MODIFIED: Added the path to your bold font file.
+            font_path=font_path,
             color_func=lambda *args, **kwargs: "black",
             repeat=True,
-            # MODIFIED: Increased word limit for denser packing.
             max_words=4000,
             relative_scaling=0.1,
             font_step=1,
-            # MODIFIED: Allow the use of extremely small fonts to fill tiny gaps.
             min_font_size=2,
         )
         wc.generate(text)
         word_image = wc.to_image()
 
     except Exception as e:
+        # Common error: Font file not found.
+        if isinstance(e, IOError):
+             print(f"FONT ERROR: Could not find the font file '{font_path}'. Make sure it's in the same directory as app.py.")
+             return jsonify({"error": f"Font file '{font_path}' not found on server."}), 500
         print(f"Error generating wordcloud: {e}")
         return jsonify({"error": "Failed to generate word cloud."}), 500
 
