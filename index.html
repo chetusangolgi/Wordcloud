@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portrait Word Cloud Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .loader {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold text-gray-900">Portrait Word Cloud Generator</h1>
+            <p class="text-lg text-gray-600 mt-2">Turn your portraits into beautiful word art.</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Controls Column -->
+            <div class="bg-white p-6 rounded-xl shadow-lg">
+                <h2 class="text-2xl font-semibold mb-4 border-b pb-2">1. Upload Your Image</h2>
+                <div class="mb-6">
+                    <input type="file" id="imageLoader" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" accept="image/*"/>
+                </div>
+
+                <h2 class="text-2xl font-semibold mb-4 border-b pb-2">2. Adjust the Mask</h2>
+                <div class="mb-6">
+                    <label for="threshold" class="block mb-2 font-medium">Black & White Threshold: <span id="thresholdValue">128</span></label>
+                    <input type="range" id="threshold" min="0" max="255" value="128" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                    <canvas id="maskPreview" class="mt-4 rounded-lg border border-gray-200 w-full" style="max-width: 400px;"></canvas>
+                </div>
+
+                <h2 class="text-2xl font-semibold mb-4 border-b pb-2">3. Add Your Words</h2>
+                <div class="mb-6">
+                    <textarea id="textInput" rows="8" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Enter your words here..."></textarea>
+                </div>
+
+                <button id="generateBtn" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-300 disabled:bg-gray-400">
+                    Generate Word Cloud
+                </button>
+            </div>
+
+            <!-- Output Column -->
+            <div class="bg-white p-6 rounded-xl shadow-lg flex flex-col items-center justify-center">
+                <h2 class="text-2xl font-semibold mb-4">Your Masterpiece</h2>
+                <div id="outputContainer" class="w-full h-full min-h-[400px] border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center p-2">
+                    <div id="loader" class="loader hidden"></div>
+                    <img id="resultImage" class="hidden max-w-full max-h-full object-contain"/>
+                    <p id="placeholderText" class="text-gray-400">Your word cloud will appear here</p>
+                </div>
+                 <a id="downloadLink" class="mt-4 bg-green-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-700 transition-colors duration-300 hidden w-full text-center">Download Image</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const imageLoader = document.getElementById('imageLoader');
+        const thresholdSlider = document.getElementById('threshold');
+        const thresholdValue = document.getElementById('thresholdValue');
+        const maskPreviewCanvas = document.getElementById('maskPreview');
+        const textInput = document.getElementById('textInput');
+        const generateBtn = document.getElementById('generateBtn');
+        const resultImage = document.getElementById('resultImage');
+        const downloadLink = document.getElementById('downloadLink');
+        const loader = document.getElementById('loader');
+        const placeholderText = document.getElementById('placeholderText');
+        
+        let originalImage = null;
+        let originalImageDataBase64 = null;
+
+        imageLoader.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                originalImageDataBase64 = event.target.result;
+                originalImage = new Image();
+                originalImage.onload = () => updateMaskPreview();
+                originalImage.src = originalImageDataBase64;
+            }
+            reader.readAsDataURL(file);
+        });
+
+        thresholdSlider.addEventListener('input', () => {
+            thresholdValue.textContent = thresholdSlider.value;
+            if (originalImage) {
+                updateMaskPreview();
+            }
+        });
+
+        function updateMaskPreview() {
+            if (!originalImage) return;
+            const ctx = maskPreviewCanvas.getContext('2d');
+            const aspectRatio = originalImage.width / originalImage.height;
+            maskPreviewCanvas.width = 400;
+            maskPreviewCanvas.height = 400 / aspectRatio;
+            
+            ctx.drawImage(originalImage, 0, 0, maskPreviewCanvas.width, maskPreviewCanvas.height);
+            
+            const imageData = ctx.getImageData(0, 0, maskPreviewCanvas.width, maskPreviewCanvas.height);
+            const data = imageData.data;
+            const threshold = parseInt(thresholdSlider.value, 10);
+
+            for (let i = 0; i < data.length; i += 4) {
+                const brightness = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+                const color = (brightness < threshold) ? 0 : 255;
+                data[i] = data[i + 1] = data[i + 2] = color;
+            }
+            ctx.putImageData(imageData, 0, 0);
+        }
+
+        generateBtn.addEventListener('click', async () => {
+            if (!originalImageDataBase64 || !textInput.value) {
+                alert("Please upload an image and enter some text.");
+                return;
+            }
+
+            loader.classList.remove('hidden');
+            placeholderText.style.display = 'none';
+            resultImage.classList.add('hidden');
+            downloadLink.classList.add('hidden');
+            generateBtn.disabled = true;
+            generateBtn.textContent = 'Generating...';
+
+            const payload = {
+                image: originalImageDataBase64,
+                text: textInput.value,
+                threshold: thresholdSlider.value
+            };
+
+            try {
+                // FIX: Corrected the typo in the URL from 1227.0.0.1 to 127.0.0.1
+                const response = await fetch('http://127.0.0.1:5000/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ error: `HTTP error! Status: ${response.status}` }));
+                    throw new Error(errorData.error);
+                }
+
+                const imageBlob = await response.blob();
+                const imageUrl = URL.createObjectURL(imageBlob);
+
+                resultImage.src = imageUrl;
+                resultImage.classList.remove('hidden');
+                downloadLink.href = imageUrl;
+                downloadLink.download = 'threshold-word-cloud.png';
+                downloadLink.classList.remove('hidden');
+
+            } catch (error) {
+                console.error("Error generating word cloud:", error);
+                alert(`An error occurred: ${error.message}`);
+                placeholderText.style.display = 'block';
+            } finally {
+                loader.classList.add('hidden');
+                generateBtn.disabled = false;
+                generateBtn.textContent = 'Generate Word Cloud';
+            }
+        });
+    </script>
+</body>
+</html>
